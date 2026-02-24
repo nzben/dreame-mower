@@ -58,6 +58,7 @@ from .dreame.map import (
     DreameMowerMapRenderer,
     DreameMowerMapDataJsonRenderer,
 )
+from .dreame.map_renderer import MowerVectorMapRenderer
 
 DREAME_TOKEN_CHANGE_INTERVAL: Final = timedelta(minutes=60)
 
@@ -481,6 +482,8 @@ class DreameMowerCameraEntity(DreameMowerEntity, Camera):
                     square,
                     False,
                 )
+        # Vector map renderer for polygon-based mower maps
+        self._vector_renderer = MowerVectorMapRenderer()
         self._image = None
         self._default_map = True
         self._proxy_images = {}
@@ -775,6 +778,20 @@ class DreameMowerCameraEntity(DreameMowerEntity, Camera):
 
     async def _update_image(self, map_data, robot_status, station_status) -> None:
         try:
+            # Prefer vector map rendering for mower polygon data
+            vector_map = self.device.vector_map if self.device else None
+            if vector_map and vector_map.boundary:
+                rendered = await self.coordinator.hass.async_add_executor_job(
+                    self._vector_renderer.render, vector_map
+                )
+                if rendered:
+                    self._image = rendered
+                    if not self.map_data_json and self._calibration_points != self._renderer.calibration_points:
+                        self._calibration_points = self._renderer.calibration_points
+                        self.coordinator.set_updated_data()
+                    return
+
+            # Fall back to existing pixel-based renderer
             self._image = self._renderer.render_map(map_data, robot_status, station_status)
             if not self.map_data_json and self._calibration_points != self._renderer.calibration_points:
                 self._calibration_points = self._renderer.calibration_points
