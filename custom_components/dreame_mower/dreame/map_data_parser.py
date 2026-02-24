@@ -208,19 +208,40 @@ def parse_batch_map_data(batch_data: dict) -> MowerVectorMap | None:
         _LOGGER.debug("No MAP chunks found in batch data")
         return None
 
+    # MAP.info contains the character length of the primary JSON array.
+    # The full reassembled string may contain multiple JSON arrays
+    # concatenated (one per map), so we use MAP.info to split them.
+    map_info = batch_data.get("MAP.info", "")
+    map_arrays = []
     try:
-        # The reassembled string is a JSON array of JSON strings
-        map_array = json.loads(raw_map)
-    except json.JSONDecodeError:
-        _LOGGER.warning("Failed to parse reassembled MAP data as JSON")
-        return None
+        split_pos = int(map_info) if map_info.isdigit() else 0
+    except (ValueError, AttributeError):
+        split_pos = 0
 
-    if not map_array:
+    if split_pos > 0 and split_pos < len(raw_map):
+        # Split into individual JSON arrays
+        parts = [raw_map[:split_pos], raw_map[split_pos:]]
+    else:
+        parts = [raw_map]
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            arr = json.loads(part)
+            if isinstance(arr, list):
+                map_arrays.extend(arr)
+        except json.JSONDecodeError:
+            _LOGGER.debug("Failed to parse MAP chunk part (len=%d)", len(part))
+
+    if not map_arrays:
+        _LOGGER.warning("No valid MAP arrays found in batch data")
         return None
 
     # Parse each map entry — they're JSON strings within the array
     primary_map = None
-    for map_json_str in map_array:
+    for map_json_str in map_arrays:
         try:
             vmap = parse_mower_map(map_json_str)
             if vmap.map_index == 0:
@@ -229,10 +250,10 @@ def parse_batch_map_data(batch_data: dict) -> MowerVectorMap | None:
             _LOGGER.warning("Failed to parse map entry: %s", ex)
             continue
 
-    if primary_map is None and map_array:
+    if primary_map is None and map_arrays:
         # Fall back to first entry if no mapIndex 0 found
         try:
-            primary_map = parse_mower_map(map_array[0])
+            primary_map = parse_mower_map(map_arrays[0])
         except (json.JSONDecodeError, KeyError, TypeError) as ex:
             _LOGGER.warning("Failed to parse fallback map entry: %s", ex)
             return None
