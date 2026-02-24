@@ -107,18 +107,20 @@ def test_parse_mower_map_total_area():
 # --- parse_mow_paths tests ---
 
 def test_parse_mow_paths_empty():
-    batch = {"M_PATH.0": "[]", "M_PATH.info": "1"}
+    batch = {"M_PATH.0": "[]", "M_PATH.info": "2"}
     result = parse_mow_paths(batch)
-    assert len(result) == 0 or (len(result) == 1 and len(result[0].segments) == 0)
+    assert len(result) == 0
 
 
 def test_parse_mow_paths_with_sentinel():
+    # M_PATH data is chunked: M_PATH.0 is first map (empty), rest is real data
     batch = {
+        "M_PATH.0": "[]",
         "M_PATH.1": "[10,20],[30,40],[32767,-32768],[50,60],[70,80]",
-        "M_PATH.info": "1",
+        "M_PATH.info": "2",
     }
     result = parse_mow_paths(batch)
-    assert len(result) >= 1
+    assert len(result) == 1
     # Should have segments split on sentinel
     mow_path = result[0]
     assert len(mow_path.segments) == 2

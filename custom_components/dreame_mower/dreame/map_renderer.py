@@ -105,12 +105,10 @@ class MowerVectorMapRenderer:
         def to_pixel(x: int, y: int) -> tuple[int, int]:
             """Convert map coordinates to pixel coordinates.
 
-            Map coordinates: Y increases upward (north).
-            Pixel coordinates: Y increases downward.
-            No flip needed — higher Y values in map coords should appear
-            higher (lower pixel Y) on screen, so we invert.
+            X axis is mirrored to match the Dreame app's orientation.
+            Y axis maps directly (higher Y = lower on screen).
             """
-            px = int((x - boundary.x1) * scale) + _PADDING
+            px = img_w - (int((x - boundary.x1) * scale) + _PADDING)
             py = int((y - boundary.y1) * scale) + _PADDING
             return (px, py)
 

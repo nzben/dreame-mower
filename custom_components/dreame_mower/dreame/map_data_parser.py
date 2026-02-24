@@ -126,63 +126,64 @@ def parse_mower_map(map_json_str: str) -> MowerVectorMap:
 def parse_mow_paths(batch_data: dict) -> list[MowerMowPath]:
     """Parse M_PATH.* keys from batch data into MowerMowPath objects.
 
-    Each M_PATH.N key contains a coordinate array for zone N.
-    Coordinates are comma-separated pairs: [x1,y1],[x2,y2],...
-    The sentinel [32767,-32768] marks a segment break.
+    M_PATH data is chunked across numbered keys (M_PATH.0, M_PATH.1, ...)
+    just like MAP data. The chunks must be reassembled into a single string.
+    M_PATH.info contains the split position for multi-map data.
+
+    The reassembled string contains [x,y] coordinate pairs with
+    [32767,-32768] sentinels marking segment breaks.
 
     Args:
         batch_data: dict from get_batch_device_datas response
 
     Returns:
-        List of MowerMowPath objects.
+        List of MowerMowPath objects (one per zone, zone_id=0).
     """
-    pattern = re.compile(r"^M_PATH\.(\d+)$")
-    paths = []
+    raw = reassemble_map_chunks(batch_data, "M_PATH")
+    if not raw:
+        return []
 
-    for key, value in batch_data.items():
-        match = pattern.match(key)
-        if not match:
-            continue
+    # M_PATH.info is the split position (like MAP.info)
+    # Skip the first map's data (typically empty "[]")
+    info = batch_data.get("M_PATH.info", "")
+    try:
+        split_pos = int(info) if info.isdigit() else 0
+    except (ValueError, AttributeError):
+        split_pos = 0
 
-        zone_id = int(match.group(1))
-        value = value.strip()
+    if split_pos > 0 and split_pos < len(raw):
+        raw = raw[split_pos:]
 
-        if not value or value == "[]":
-            continue
+    if not raw.strip() or raw.strip() == "[]":
+        return []
 
-        # Parse the coordinate pairs from the string
-        # Format: [x,y],[x,y],... or just x,y,x,y,...
-        # We need to handle: ",[32767,-32768],[10,20],[30,40]"
-        # Strip leading/trailing brackets and commas
-        coords_str = value.strip("[], ")
-        if not coords_str:
-            continue
+    # Extract all [x,y] coordinate pairs using regex.
+    # This is robust against chunk boundary artifacts since it
+    # only matches well-formed [int,int] pairs.
+    pair_pattern = re.compile(r"\[(-?\d+),(-?\d+)\]")
+    pairs = [(int(m.group(1)), int(m.group(2))) for m in pair_pattern.finditer(raw)]
 
-        # Parse all numbers
-        numbers = re.findall(r"-?\d+", coords_str)
-        if len(numbers) % 2 != 0:
-            _LOGGER.warning("Odd number of coordinates in M_PATH.%d, skipping last", zone_id)
-            numbers = numbers[:-1]
+    if not pairs:
+        return []
 
-        # Build coordinate pairs, splitting on sentinel
-        segments = []
-        current_segment = []
-        for i in range(0, len(numbers), 2):
-            x, y = int(numbers[i]), int(numbers[i + 1])
-            if (x, y) == _PATH_SENTINEL:
-                if current_segment:
-                    segments.append(current_segment)
-                    current_segment = []
-            else:
-                current_segment.append((x, y))
+    # Split on sentinel into segments
+    segments = []
+    current_segment = []
+    for p in pairs:
+        if p == _PATH_SENTINEL:
+            if current_segment:
+                segments.append(current_segment)
+                current_segment = []
+        else:
+            current_segment.append(p)
 
-        if current_segment:
-            segments.append(current_segment)
+    if current_segment:
+        segments.append(current_segment)
 
-        if segments:
-            paths.append(MowerMowPath(zone_id=zone_id, segments=segments))
+    if segments:
+        return [MowerMowPath(zone_id=0, segments=segments)]
 
-    return paths
+    return []
 
 
 def parse_batch_map_data(batch_data: dict) -> MowerVectorMap | None:
